@@ -1,50 +1,36 @@
 image: google/cloud-sdk:latest
 
-options:
-  docker: true
-
 pipelines:
-  branches:
-    main:
-      - step:
-          name: Build and Push to GAR
-          services:
-            - docker
-          script:
-            - echo "Activating service account"
-            - echo $GCLOUD_SERVICE_KEY | base64 -d > ${BITBUCKET_CLONE_DIR}/key.json
-            - gcloud auth activate-service-account --key-file=${BITBUCKET_CLONE_DIR}/key.json
-            - gcloud config set project $GCP_PROJECT
-            - gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+  default:
+    - step:
+        name: Build and Deploy to GKE
+        services:
+          - docker
+        caches:
+          - docker
+        script:
+          # Authenticate with GCP
+          - echo $GCP_SA_KEY > gcp-key.json
+          - gcloud auth activate-service-account --key-file=gcp-key.json
+          - gcloud config set project $GCP_PROJECT
+          - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
 
-            - IMAGE="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/fastapi:${BITBUCKET_COMMIT}"
-            - echo "Building image $IMAGE"
-            - docker build -t $IMAGE .
-            - docker push $IMAGE
+          # Build and push Docker image
+          - IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
+          - docker build -t $IMAGE_URI .
+          - docker push $IMAGE_URI
 
-            - echo "Storing image name for deploy step"
-            - echo $IMAGE > image_name.txt
-          artifacts:
-            - image_name.txt
+          # Get GKE credentials
+          - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+          - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $GCP_PROJECT
 
-      - step:
-          name: Deploy to GKE
-          deployment: production
-          script:
-            - echo $GCLOUD_SERVICE_KEY | base64 -d > ${BITBUCKET_CLONE_DIR}/key.json
-            - gcloud auth activate-service-account --key-file=${BITBUCKET_CLONE_DIR}/key.json
-            - gcloud config set project $GCP_PROJECT
-            - gcloud container clusters get-credentials $GKE_CLUSTER --region $GKE_REGION
-
-            - IMAGE=$(cat image_name.txt)
-            - sed -i "s|REPLACE_WITH_IMAGE|$IMAGE|g" k8s/deployment.yaml
-
-            - kubectl apply -f k8s/namespace.yaml
-            - kubectl apply -f k8s/deployment.yaml
-            - kubectl apply -f k8s/service.yaml
-            - kubectl apply -f k8s/hpa.yaml
+          # Deploy to Kubernetes
+          - kubectl apply -f k8s/namespace.yaml
+          - sed "s|IMAGE_PLACEHOLDER|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
+          - kubectl apply -f k8s/service.yaml
+          - kubectl apply -f k8s/hpa.yaml
 
 definitions:
   services:
     docker:
-      memory: 2048
+      memory: 3072
