@@ -17,7 +17,7 @@ pipelines:
               --tenant $CHECKMARX_TENANT \
               --apikey $API_KEY \
               --agent "Bitbucket" \
-              --scan-types sast,sca,kics,scs
+              --scan-types sast,sca,kics,apisec,scs,container
           
           - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
     - step:
