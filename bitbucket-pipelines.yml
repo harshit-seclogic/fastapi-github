@@ -1,0 +1,50 @@
+image: google/cloud-sdk:latest
+
+options:
+  docker: true
+
+pipelines:
+  branches:
+    main:
+      - step:
+          name: Build and Push to GAR
+          services:
+            - docker
+          script:
+            - echo "Activating service account"
+            - echo $GCLOUD_SERVICE_KEY | base64 -d > ${BITBUCKET_CLONE_DIR}/key.json
+            - gcloud auth activate-service-account --key-file=${BITBUCKET_CLONE_DIR}/key.json
+            - gcloud config set project $GCP_PROJECT
+            - gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+
+            - IMAGE="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/fastapi:${BITBUCKET_COMMIT}"
+            - echo "Building image $IMAGE"
+            - docker build -t $IMAGE .
+            - docker push $IMAGE
+
+            - echo "Storing image name for deploy step"
+            - echo $IMAGE > image_name.txt
+          artifacts:
+            - image_name.txt
+
+      - step:
+          name: Deploy to GKE
+          deployment: production
+          script:
+            - echo $GCLOUD_SERVICE_KEY | base64 -d > ${BITBUCKET_CLONE_DIR}/key.json
+            - gcloud auth activate-service-account --key-file=${BITBUCKET_CLONE_DIR}/key.json
+            - gcloud config set project $GCP_PROJECT
+            - gcloud container clusters get-credentials $GKE_CLUSTER --region $GKE_REGION
+
+            - IMAGE=$(cat image_name.txt)
+            - sed -i "s|REPLACE_WITH_IMAGE|$IMAGE|g" k8s/deployment.yaml
+
+            - kubectl apply -f k8s/namespace.yaml
+            - kubectl apply -f k8s/deployment.yaml
+            - kubectl apply -f k8s/service.yaml
+            - kubectl apply -f k8s/hpa.yaml
+
+definitions:
+  services:
+    docker:
+      memory: 2048
