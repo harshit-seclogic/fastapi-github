@@ -26,7 +26,7 @@ pipelines:
           - bash -c 'export USE_GKE_GCLOUD_AUTH_PLUGIN=True && gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $GCP_PROJECT'
 
           # 4️⃣ Deploy to Kubernetes
-          - bash -c 'kubectl apply -f k8s/namespace.yaml'
+          - bash -c 'kubectl apply -f k8s/namespace.yaml --validate=false'
           - bash -c "sed 's|REPLACE_WITH_IMAGE|$IMAGE_URI|g' k8s/deployment.yaml | kubectl apply -f -"
           - bash -c 'kubectl apply -f k8s/service.yaml'
           - bash -c 'kubectl apply -f k8s/hpa.yaml'
