@@ -17,7 +17,9 @@ pipelines:
               --tenant $CHECKMARX_TENANT \
               --apikey $API_KEY \
               --agent "Bitbucket" \
-              --scan-types sast,sca,iac-security,api-security,scs,containers
+              --scan-types sast,sca,iac-security,api-security,scs,containers \
+              --scs-repo-url "https://bitbucket.org/$BITBUCKET_REPO_FULL_NAME" \
+              --scs-repo-token "$BITBUCKET_ACCESS_TOKEN" \
           
           - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
     - step:
