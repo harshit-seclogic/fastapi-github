@@ -15,7 +15,7 @@ pipelines:
               --base-uri $CHECKMARX_BASE_URI \
               --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
               --tenant $CHECKMARX_TENANT \
-              --api-key $API_KEY \
+              --apikey $API_KEY \
               --agent "Bitbucket" \
               --scan-types sast,sca,kics,scs
           
