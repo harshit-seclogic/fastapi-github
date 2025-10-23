@@ -9,8 +9,8 @@ pipelines:
         caches:
           - docker
         script:
-          # Authenticate with GCP
-          - echo $GCP_SA_KEY > gcp-key.json
+          # Decode and authenticate with GCP
+          - echo $GCP_SA_KEY | base64 --decode > gcp-key.json
           - gcloud auth activate-service-account --key-file=gcp-key.json
           - gcloud config set project $GCP_PROJECT
           - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
