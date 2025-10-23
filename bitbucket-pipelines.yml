@@ -9,23 +9,23 @@ pipelines:
         caches:
           - docker
         script:
-          # 1️⃣ Decode and authenticate with GCP
+          # Decode and authenticate with GCP
           - echo $GCP_SA_KEY | base64 --decode > gcp-key.json
           - gcloud auth activate-service-account --key-file=gcp-key.json
           - gcloud config set project $GCP_PROJECT
           - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
 
-          # 2️⃣ Build and push Docker image
+          # Build and push Docker image
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
-          - echo "Building Docker image: $IMAGE_URI"
+          - 'echo "Building Docker image: $IMAGE_URI"'
           - docker build -t $IMAGE_URI .
           - docker push $IMAGE_URI
 
-          # 3️⃣ Get GKE credentials
+          # Get GKE credentials
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
           - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $GCP_PROJECT
 
-          # 4️⃣ Deploy to Kubernetes
+          # Deploy to Kubernetes
           - kubectl apply -f k8s/namespace.yaml --validate=false
           - sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
           - kubectl apply -f k8s/service.yaml
