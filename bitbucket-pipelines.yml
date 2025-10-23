@@ -2,6 +2,24 @@ image: google/cloud-sdk:latest
 
 pipelines:
   default:
+# Checkmarx Security Scan
+    - step:
+        name: Checkmarx Security Scan
+        image: checkmarx/ast-cli:latest
+        script:
+          - |
+            /app/bin/cx scan create \
+              -s . \
+              --project-name "$BITBUCKET_REPO_SLUG" \
+              --branch "$BITBUCKET_BRANCH" \
+              --base-uri $CHECKMARX_BASE_URI \
+              --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
+              --tenant $CHECKMARX_TENANT \
+              --api-key $API_KEY \
+              --agent "Bitbucket" \
+              --scan-types sast,sca,kics,scs
+          
+          - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
     - step:
         name: Build and Deploy to GKE
         services:
