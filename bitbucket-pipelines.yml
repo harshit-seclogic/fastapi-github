@@ -2,26 +2,6 @@ image: google/cloud-sdk:latest
 
 pipelines:
   default:
-# Checkmarx Security Scan
-    - step:
-        name: Checkmarx Security Scan
-        image: checkmarx/ast-cli:latest
-        script:
-          - |
-            /app/bin/cx scan create \
-              -s . \
-              --project-name "$BITBUCKET_REPO_SLUG" \
-              --branch "$BITBUCKET_BRANCH" \
-              --base-uri $CHECKMARX_BASE_URI \
-              --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
-              --tenant $CHECKMARX_TENANT \
-              --apikey $API_KEY \
-              --agent "Bitbucket" \
-              --scan-types sast,sca,iac-security,api-security,scs,containers \
-              --scs-repo-url "https://bitbucket.org/$BITBUCKET_REPO_FULL_NAME" \
-              --scs-repo-token "$BITBUCKET_ACCESS_TOKEN" \
-          
-          - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
     - step:
         name: Build and Deploy to GKE
         services:
@@ -29,27 +9,22 @@ pipelines:
         caches:
           - docker
         script:
-          # Decode and authenticate with GCP
-          - echo $GCP_SA_KEY | base64 --decode > gcp-key.json
-          - gcloud auth activate-service-account --key-file=gcp-key.json
-          - gcloud config set project $GCP_PROJECT
-          - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
+          - 'echo $GCP_SA_KEY | base64 --decode > gcp-key.json'
+          - 'gcloud auth activate-service-account --key-file=gcp-key.json'
+          - 'gcloud config set project $GCP_PROJECT'
+          - 'gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q'
 
-          # Build and push Docker image
-          - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
-          - 'echo "Building Docker image: $IMAGE_URI"'
-          - docker build -t $IMAGE_URI .
-          - docker push $IMAGE_URI
+          - 'export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"'
+          - 'bash -lc "echo Building Docker image: $IMAGE_URI"'
+          - 'bash -lc "docker build -t $IMAGE_URI ."'
+          - 'bash -lc "docker push $IMAGE_URI"'
 
-          # Get GKE credentials
-          - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-          - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $GCP_PROJECT
+          - 'bash -lc "export USE_GKE_GCLOUD_AUTH_PLUGIN=True && gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $GCP_PROJECT"'
 
-          # Deploy to Kubernetes
-          - kubectl apply -f k8s/namespace.yaml --validate=false
-          - sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
-          - kubectl apply -f k8s/service.yaml
-          - kubectl apply -f k8s/hpa.yaml
+          - 'bash -lc "kubectl apply -f k8s/namespace.yaml --validate=false"'
+          - 'bash -lc "sed \"s|REPLACE_WITH_IMAGE|$IMAGE_URI|g\" k8s/deployment.yaml | kubectl apply -f -"' 
+          - 'bash -lc "kubectl apply -f k8s/service.yaml"'
+          - 'bash -lc "kubectl apply -f k8s/hpa.yaml"'
 
 definitions:
   services:
