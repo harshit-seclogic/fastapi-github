@@ -3,25 +3,25 @@ image: google/cloud-sdk:latest
 pipelines:
   default:
 # Checkmarx Security Scan
-    # - step:
-    #     name: Checkmarx Security Scan
-    #     image: checkmarx/ast-cli:latest
-    #     script:
-    #       - |
-    #         /app/bin/cx scan create \
-    #           -s . \
-    #           --project-name "$BITBUCKET_REPO_SLUG" \
-    #           --branch "$BITBUCKET_BRANCH" \
-    #           --base-uri $CHECKMARX_BASE_URI \
-    #           --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
-    #           --tenant $CHECKMARX_TENANT \
-    #           --apikey $API_KEY \
-    #           --agent "Bitbucket" \
-    #           --scan-types sast,sca,iac-security,api-security,scs,containers \
-    #           --scs-repo-url "https://bitbucket.org/$BITBUCKET_REPO_FULL_NAME" \
-    #           --scs-repo-token "$BITBUCKET_ACCESS_TOKEN" \
+    - step:
+        name: Checkmarx Security Scan
+        image: checkmarx/ast-cli:latest
+        script:
+          - |
+            /app/bin/cx scan create \
+              -s . \
+              --project-name "$BITBUCKET_REPO_SLUG" \
+              --branch "$BITBUCKET_BRANCH" \
+              --base-uri $CHECKMARX_BASE_URI \
+              --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
+              --tenant $CHECKMARX_TENANT \
+              --apikey $API_KEY \
+              --agent "Bitbucket" \
+              --scan-types sast,sca,iac-security,api-security,scs,containers \
+              --scs-repo-url "https://bitbucket.org/$BITBUCKET_REPO_FULL_NAME" \
+              --scs-repo-token "$BITBUCKET_ACCESS_TOKEN" \
           
-    #       - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
+          - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
     - step:
         name: Build and Deploy to GKE
         services:
@@ -43,7 +43,7 @@ pipelines:
 
           # Get GKE credentials
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-          - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $GCP_PROJECT
+          - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_REGION --project $GCP_PROJECT
 
           # Deploy to Kubernetes
           - kubectl apply -f k8s/namespace.yaml --validate=false
