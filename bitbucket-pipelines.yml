@@ -20,13 +20,17 @@ pipelines:
           - 'echo "Building Docker image: ${IMAGE_URI}"'
           - docker build -t "${IMAGE_URI}" .
 
-          # Push image first (needed for Syft)
+          # Generate SBOM from local Docker daemon (BEFORE pushing)
+          - echo "Generating SBOM from local image..."
+          - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest "docker:${IMAGE_URI}" -o json > sbom.json
+          
+          # Verify SBOM was created
+          - ls -lh sbom.json
+          - echo "SBOM generated successfully"
+
+          # Push image to registry
           - echo "Pushing image to Artifact Registry..."
           - docker push "${IMAGE_URI}"
-
-          # Generate SBOM from pushed image
-          - echo "Generating SBOM..."
-          - docker run --rm anchore/syft:latest "${IMAGE_URI}" -o json > sbom.json
 
         artifacts:
           - sbom.json   # Available for next steps
@@ -73,10 +77,18 @@ pipelines:
 
     - step:
         name: Deploy to GKE
+        image: google/cloud-sdk:latest
         services:
           - docker
         script:
+          # Re-authenticate for GKE step
+          - echo "$GCP_SA_KEY" | base64 --decode > gcp-key.json
+          - gcloud auth activate-service-account --key-file=gcp-key.json
+          - gcloud config set project "$GCP_PROJECT"
+          
+          # GKE Deployment
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+          - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
           - gcloud container clusters get-credentials "$GKE_CLUSTER" --zone "$GKE_ZONE" --project "$GCP_PROJECT"
           - kubectl apply -f k8s/namespace.yaml --validate=false
           - sed "s|REPLACE_WITH_IMAGE|${IMAGE_URI}|g" k8s/deployment.yaml | kubectl apply -f -
