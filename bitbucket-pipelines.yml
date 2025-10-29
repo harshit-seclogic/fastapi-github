@@ -2,6 +2,26 @@ image: google/cloud-sdk:latest
 
 pipelines:
   default:
+# Checkmarx Security Scan
+    - step:
+        name: Checkmarx Security Scan
+        image: checkmarx/ast-cli:latest
+        script:
+          - |
+            /app/bin/cx scan create \
+              -s . \
+              --project-name "$BITBUCKET_REPO_SLUG" \
+              --branch "$BITBUCKET_BRANCH" \
+              --base-uri $CHECKMARX_BASE_URI \
+              --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
+              --tenant $CHECKMARX_TENANT \
+              --apikey $API_KEY \
+              --agent "Bitbucket" \
+              --scan-types sast,sca,iac-security,api-security,scs,containers \
+              --scs-repo-url "https://bitbucket.org/$BITBUCKET_REPO_FULL_NAME" \
+              --scs-repo-token "$BITBUCKET_ACCESS_TOKEN" \
+          
+          - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
     - step:
         name: Build and Deploy to GKE
         services:
@@ -15,98 +35,34 @@ pipelines:
           - gcloud config set project $GCP_PROJECT
           - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
 
-          # Set image URI
+          # Build and push Docker image with Bitbucket metadata
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
-          
-          # Debug: Show environment variables
-          - echo "=========================================="
-          - echo "Bitbucket Environment Variables:"
-          - echo "=========================================="
-          - echo "BITBUCKET_REPO_SLUG = ${BITBUCKET_REPO_SLUG}"
-          - echo "BITBUCKET_PROJECT_KEY = ${BITBUCKET_PROJECT_KEY}"
-          - echo "BITBUCKET_REPO_OWNER = ${BITBUCKET_REPO_OWNER}"
-          - echo "BITBUCKET_REPO_FULL_NAME = ${BITBUCKET_REPO_FULL_NAME}"
-          - echo "BITBUCKET_BRANCH = ${BITBUCKET_BRANCH}"
-          - echo "BITBUCKET_COMMIT = ${BITBUCKET_COMMIT}"
-          - echo "BITBUCKET_BUILD_NUMBER = ${BITBUCKET_BUILD_NUMBER}"
-          - echo "BITBUCKET_STEP_TRIGGERER_UUID = ${BITBUCKET_STEP_TRIGGERER_UUID}"
-          
-          # Build Docker image with ALL metadata
-          - echo "=========================================="
-          - 'echo "Building Docker image: ${IMAGE_URI}"'
-          - echo "=========================================="
+          - 'echo "Building Docker image: $IMAGE_URI"'
           - |
             docker build \
-              --build-arg BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
-              --build-arg VCS_REF="${BITBUCKET_COMMIT}" \
-              --build-arg VERSION="${BITBUCKET_BUILD_NUMBER}" \
-              --build-arg BITBUCKET_REPO_NAME="${BITBUCKET_REPO_SLUG}" \
-              --build-arg BITBUCKET_PROJECT_ID="${BITBUCKET_PROJECT_KEY}" \
-              --build-arg BITBUCKET_REPO_OWNER="${BITBUCKET_REPO_OWNER}" \
-              --build-arg BITBUCKET_REPO_FULL_NAME="${BITBUCKET_REPO_FULL_NAME}" \
-              --build-arg BITBUCKET_BRANCH="${BITBUCKET_BRANCH}" \
-              --build-arg BITBUCKET_COMMIT="${BITBUCKET_COMMIT}" \
-              --build-arg BITBUCKET_BUILD_NUMBER="${BITBUCKET_BUILD_NUMBER}" \
-              --build-arg BITBUCKET_TRIGGERER="${BITBUCKET_STEP_TRIGGERER_UUID}" \
-              -t "${IMAGE_URI}" .
-          
-          # Inspect local image labels BEFORE pushing
-          - echo "=========================================="
-          - echo "Verifying labels on LOCAL image:"
-          - echo "=========================================="
-          - docker inspect "${IMAGE_URI}" --format='{{json .Config.Labels}}' | python3 -m json.tool
-          
-          # Push image to GAR
-          - echo "=========================================="
-          - echo "Pushing image to Artifact Registry..."
-          - echo "=========================================="
-          - docker push "${IMAGE_URI}"
-          
-          # Wait a moment for GAR to process
-          - sleep 5
-          
-          # Describe image in GAR and show labels
-          - echo "=========================================="
-          - echo "Verifying labels in GAR (JSON Format):"
-          - echo "=========================================="
-          - gcloud artifacts docker images describe "${IMAGE_URI}" --format=json
-          
-          - echo ""
-          - echo "=========================================="
-          - echo "Extracting Labels from GAR:"
-          - echo "=========================================="
-          - |
-            gcloud artifacts docker images describe "${IMAGE_URI}" --format=json > /tmp/image_info.json
-            python3 << 'EOF'
-            import json
-            with open('/tmp/image_info.json') as f:
-                data = json.load(f)
-                labels = data.get('image_summary', {}).get('metadata', {}).get('labels', {})
-                if labels:
-                    print("Labels found:")
-                    print(json.dumps(labels, indent=2, sort_keys=True))
-                else:
-                    print("⚠️  No labels found in GAR!")
-                    print("Full response:")
-                    print(json.dumps(data, indent=2))
-            EOF
+              --label "bitbucket.repo.slug=${BITBUCKET_REPO_SLUG}" \
+              --label "bitbucket.repo.full.name=${BITBUCKET_REPO_FULL_NAME}" \
+              --label "bitbucket.workspace=${BITBUCKET_WORKSPACE}" \
+              --label "bitbucket.branch=${BITBUCKET_BRANCH}" \
+              --label "bitbucket.commit.sha=${BITBUCKET_COMMIT}" \
+              --label "bitbucket.commit.author=${BITBUCKET_COMMIT_AUTHOR:-unknown}" \
+              --label "bitbucket.build.number=${BITBUCKET_BUILD_NUMBER}" \
+              --label "bitbucket.pipeline.uuid=${BITBUCKET_PIPELINE_UUID}" \
+              --label "bitbucket.repo.url=https://bitbucket.org/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}" \
+              --label "build.date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+              -t $IMAGE_URI \
+              .
+          - docker push $IMAGE_URI
 
           # Get GKE credentials
-          - echo "=========================================="
-          - echo "Deploying to GKE..."
-          - echo "=========================================="
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
           - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_REGION --project $GCP_PROJECT
 
           # Deploy to Kubernetes
           - kubectl apply -f k8s/namespace.yaml --validate=false
-          - sed "s|REPLACE_WITH_IMAGE|${IMAGE_URI}|g" k8s/deployment.yaml | kubectl apply -f -
+          - sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
           - kubectl apply -f k8s/service.yaml
           - kubectl apply -f k8s/hpa.yaml
-          
-          - echo "=========================================="
-          - echo "✅ Deployment completed successfully!"
-          - echo "=========================================="
 
 definitions:
   services:
