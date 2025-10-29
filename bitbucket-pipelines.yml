@@ -18,7 +18,7 @@ pipelines:
           # Build image
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
           - 'echo "Building Docker image: $IMAGE_URI"'
-          - docker build -t $IMAGE_URI .
+          - docker build -t "$IMAGE_URI" .
 
           # Generate SBOM
           - echo "Generating SBOM..."
