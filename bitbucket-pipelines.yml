@@ -43,17 +43,33 @@ pipelines:
           - echo "=========================================="
           - docker push $IMAGE_URI
           
-          # Describe image and show labels
+          # Describe image and show labels in JSON format
           - echo "=========================================="
-          - echo "Image Labels - All Information:"
+          - echo "Image Labels (JSON Format):"
           - echo "=========================================="
-          - gcloud artifacts docker images describe $IMAGE_URI --format=json | jq '.image_summary.metadata.labels'
+          - |
+            gcloud artifacts docker images describe $IMAGE_URI --format=json > /tmp/image_info.json
+            python3 << 'EOF'
+            import json
+            with open('/tmp/image_info.json') as f:
+                data = json.load(f)
+                labels = data.get('image_summary', {}).get('metadata', {}).get('labels', {})
+                print(json.dumps(labels, indent=2, sort_keys=True))
+            EOF
           
           - echo ""
           - echo "=========================================="
-          - echo "Bitbucket Repository Information:"
+          - echo "Bitbucket Labels Only (JSON Format):"
           - echo "=========================================="
-          - gcloud artifacts docker images describe $IMAGE_URI --format=json | jq '.image_summary.metadata.labels | with_entries(select(.key | startswith("bitbucket")))'
+          - |
+            python3 << 'EOF'
+            import json
+            with open('/tmp/image_info.json') as f:
+                data = json.load(f)
+                labels = data.get('image_summary', {}).get('metadata', {}).get('labels', {})
+                bitbucket_labels = {k: v for k, v in labels.items() if k.startswith('bitbucket')}
+                print(json.dumps(bitbucket_labels, indent=2, sort_keys=True))
+            EOF
 
           # Get GKE credentials
           - echo "=========================================="
