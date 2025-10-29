@@ -2,28 +2,8 @@ image: google/cloud-sdk:latest
 
 pipelines:
   default:
-# Checkmarx Security Scan
     - step:
-        name: Checkmarx Security Scan
-        image: checkmarx/ast-cli:latest
-        script:
-          - |
-            /app/bin/cx scan create \
-              -s . \
-              --project-name "$BITBUCKET_REPO_SLUG" \
-              --branch "$BITBUCKET_BRANCH" \
-              --base-uri $CHECKMARX_BASE_URI \
-              --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
-              --tenant $CHECKMARX_TENANT \
-              --apikey $API_KEY \
-              --agent "Bitbucket" \
-              --scan-types sast,sca,iac-security,api-security,scs,containers \
-              --scs-repo-url "https://bitbucket.org/$BITBUCKET_REPO_FULL_NAME" \
-              --scs-repo-token "$BITBUCKET_ACCESS_TOKEN" \
-          
-          - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
-    - step:
-        name: Build and Deploy to GKE
+        name: Build Image and Generate SBOM
         services:
           - docker
         caches:
@@ -35,15 +15,70 @@ pipelines:
           - gcloud config set project $GCP_PROJECT
           - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
 
-          # Build and push Docker image
+          # Build Docker image
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
-          - 'echo "Building Docker image: $IMAGE_URI"'
+          - echo "Building Docker image: $IMAGE_URI"
           - docker build -t $IMAGE_URI .
+
+          # Generate SBOM from built image for correlation
+          - echo "Generating SBOM from built image..."
+          - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest $IMAGE_URI -o json > sbom.json
+
+          # Upload SBOM for subsequent steps
+          - pipe: atlassian/bitbucket-upload-file:1.2.0
+            variables:
+              BITBUCKET_USERNAME: $BITBUCKET_USERNAME
+              BITBUCKET_APP_PASSWORD: $BITBUCKET_APP_PASSWORD
+              FILENAME: 'sbom.json'
+
+    - step:
+        name: Security Scans
+        script:
+          # Download SBOM
+          - pipe: atlassian/bitbucket-download-file:1.2.0
+            variables:
+              FILENAME: 'sbom.json'
+
+          # Run Checkmarx container scan on the built image
+          - echo "Running Checkmarx container scan on built image..."
+          - /app/bin/cx scan create \
+            --project-name "$BITBUCKET_REPO_SLUG" \
+            --branch "$BITBUCKET_BRANCH" \
+            --base-uri $CHECKMARX_BASE_URI \
+            --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
+            --tenant $CHECKMARX_TENANT \
+            --apikey $API_KEY \
+            --agent "Bitbucket" \
+            --scan-types container \
+            --container-image $IMAGE_URI
+
+          # Run other Checkmarx scans on source code
+          - echo "Running Checkmarx SAST, SCA, and other scans..."
+          - /app/bin/cx scan create \
+            -s . \
+            --project-name "$BITBUCKET_REPO_SLUG" \
+            --branch "$BITBUCKET_BRANCH" \
+            --base-uri $CHECKMARX_BASE_URI \
+            --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
+            --tenant $CHECKMARX_TENANT \
+            --apikey $API_KEY \
+            --agent "Bitbucket" \
+            --scan-types sast,sca,kics,apisec,scs
+
+    - step:
+        name: Push Image and Deploy to GKE
+        services:
+          - docker
+        caches:
+          - docker
+        script:
+          # Push Docker image (only if built successfully in first step)
+          - echo "Pushing Docker image: $IMAGE_URI"
           - docker push $IMAGE_URI
 
           # Get GKE credentials
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-          - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_REGION --project $GCP_PROJECT
+          - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $GCP_PROJECT
 
           # Deploy to Kubernetes
           - kubectl apply -f k8s/namespace.yaml --validate=false
