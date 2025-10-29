@@ -9,78 +9,86 @@ pipelines:
         caches:
           - docker
         script:
-          # Decode and authenticate with GCP
-          - echo $GCP_SA_KEY | base64 --decode > gcp-key.json
+          # Authenticate with GCP
+          - echo "$GCP_SA_KEY" | base64 --decode > gcp-key.json
           - gcloud auth activate-service-account --key-file=gcp-key.json
-          - gcloud config set project $GCP_PROJECT
+          - gcloud config set project "$GCP_PROJECT"
           - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
 
-          # Build Docker image
+          # Build and tag image
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
-          - echo "Building Docker image: $IMAGE_URI"
+          - 'echo "Building Docker image: $IMAGE_URI"'
           - docker build -t $IMAGE_URI .
 
-          # Generate SBOM from built image for correlation
+          # Generate SBOM
           - echo "Generating SBOM from built image..."
-          - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest $IMAGE_URI -o json > sbom.json
+          - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest "$IMAGE_URI" -o json > sbom.json
 
-          # Upload SBOM for subsequent steps
+          # Upload SBOM
           - pipe: atlassian/bitbucket-upload-file:1.2.0
             variables:
               BITBUCKET_USERNAME: $BITBUCKET_USERNAME
               BITBUCKET_APP_PASSWORD: $BITBUCKET_APP_PASSWORD
               FILENAME: 'sbom.json'
 
+          # Push image early so Checkmarx can access it
+          - echo "Pushing image to GAR..."
+          - docker push "$IMAGE_URI"
+
     - step:
         name: Security Scans
+        image: checkmarx/ast-cli:latest  # Critical: Use Checkmarx CLI image
+        services:
+          - docker
         script:
           # Download SBOM
           - pipe: atlassian/bitbucket-download-file:1.2.0
             variables:
               FILENAME: 'sbom.json'
 
-          # Run Checkmarx container scan on the built image
-          - echo "Running Checkmarx container scan on built image..."
-          - /app/bin/cx scan create \
-            --project-name "$BITBUCKET_REPO_SLUG" \
-            --branch "$BITBUCKET_BRANCH" \
-            --base-uri $CHECKMARX_BASE_URI \
-            --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
-            --tenant $CHECKMARX_TENANT \
-            --apikey $API_KEY \
-            --agent "Bitbucket" \
-            --scan-types container \
-            --container-image $IMAGE_URI
+          # Container Image Scan
+          - echo "Running Checkmarx container scan..."
+          - >
+            /app/bin/cx scan create
+            --project-name "$BITBUCKET_REPO_SLUG"
+            --branch "$BITBUCKET_BRANCH"
+            --base-uri "$CHECKMARX_BASE_URI"
+            --base-auth-uri "$CHECKMARX_BASE_AUTH_URI"
+            --tenant "$CHECKMARX_TENANT"
+            --apikey "$API_KEY"
+            --agent "Bitbucket"
+            --scan-types container
+            --container-image "$IMAGE_URI"
+            --sbom-path sbom.json
+            --async
 
-          # Run other Checkmarx scans on source code
-          - echo "Running Checkmarx SAST, SCA, and other scans..."
-          - /app/bin/cx scan create \
-            -s . \
-            --project-name "$BITBUCKET_REPO_SLUG" \
-            --branch "$BITBUCKET_BRANCH" \
-            --base-uri $CHECKMARX_BASE_URI \
-            --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
-            --tenant $CHECKMARX_TENANT \
-            --apikey $API_KEY \
-            --agent "Bitbucket" \
+          # Source Code Scans (SAST, SCA, etc.)
+          - echo "Running Checkmarx SAST/SCA/KICS scans..."
+          - >
+            /itespace/app/bin/cx scan create
+            -s .
+            --project-name "$BITBUCKET_REPO_SLUG"
+            --branch "$BITBUCKET_BRANCH"
+            --base-uri "$CHECKMARX_BASE_URI"
+            --base-auth-uri "$CHECKMARX_BASE_AUTH_URI"
+            --tenant "$CHECKMARX_TENANT"
+            --apikey "$API_KEY"
+            --agent "Bitbucket"
             --scan-types sast,sca,kics,apisec,scs
+            --async
 
     - step:
-        name: Push Image and Deploy to GKE
+        name: Deploy to GKE
         services:
           - docker
         caches:
           - docker
         script:
-          # Push Docker image (only if built successfully in first step)
-          - echo "Pushing Docker image: $IMAGE_URI"
-          - docker push $IMAGE_URI
-
           # Get GKE credentials
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-          - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $GCP_PROJECT
+          - gcloud container clusters get-credentials "$GKE_CLUSTER" --zone "$GKE_ZONE" --project "$GCP_PROJECT"
 
-          # Deploy to Kubernetes
+          # Deploy
           - kubectl apply -f k8s/namespace.yaml --validate=false
           - sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
           - kubectl apply -f k8s/service.yaml
