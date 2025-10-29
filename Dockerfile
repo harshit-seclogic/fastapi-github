@@ -4,42 +4,36 @@ FROM python:3.11-slim
 ARG BUILD_DATE
 ARG VCS_REF
 ARG VERSION
-ARG REPO_URL
-ARG REPO_NAME
 
-# Accept Checkmarx scan metadata
-ARG CX_SCAN_ID
-ARG CX_PROJECT_ID
-ARG CX_PROJECT_NAME
-ARG CX_SCAN_STATUS
-ARG CX_CREATED_AT
-ARG CX_BRANCH
-ARG CX_SCAN_TYPE
-ARG CX_INITIATOR
-ARG CX_ORIGIN
-ARG CX_ENGINES
+# Accept Bitbucket repository metadata
+ARG BITBUCKET_REPO_NAME
+ARG BITBUCKET_PROJECT_ID
+ARG BITBUCKET_REPO_OWNER
+ARG BITBUCKET_REPO_FULL_NAME
+ARG BITBUCKET_BRANCH
+ARG BITBUCKET_COMMIT
+ARG BITBUCKET_BUILD_NUMBER
+ARG BITBUCKET_TRIGGERER
 
-# Add metadata labels - OCI Standard
+# Add OCI standard labels
 LABEL maintainer="seclogic-admin@bitbucket.org" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.url="${REPO_URL}" \
-      org.opencontainers.image.source="${REPO_URL}.git" \
+      org.opencontainers.image.source="https://bitbucket.org/${BITBUCKET_REPO_FULL_NAME}.git" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
-      org.opencontainers.image.title="${REPO_NAME}" \
+      org.opencontainers.image.title="${BITBUCKET_REPO_NAME}" \
       org.opencontainers.image.description="FastAPI application for GKE deployment"
 
-# Add Checkmarx security scan metadata labels
-LABEL checkmarx.scan.id="${CX_SCAN_ID}" \
-      checkmarx.project.id="${CX_PROJECT_ID}" \
-      checkmarx.project.name="${CX_PROJECT_NAME}" \
-      checkmarx.scan.status="${CX_SCAN_STATUS}" \
-      checkmarx.scan.created="${CX_CREATED_AT}" \
-      checkmarx.scan.branch="${CX_BRANCH}" \
-      checkmarx.scan.type="${CX_SCAN_TYPE}" \
-      checkmarx.scan.initiator="${CX_INITIATOR}" \
-      checkmarx.scan.origin="${CX_ORIGIN}" \
-      checkmarx.scan.engines="${CX_ENGINES}"
+# Add Bitbucket repository metadata labels
+LABEL bitbucket.repo.name="${BITBUCKET_REPO_NAME}" \
+      bitbucket.project.id="${BITBUCKET_PROJECT_ID}" \
+      bitbucket.repo.owner="${BITBUCKET_REPO_OWNER}" \
+      bitbucket.repo.full_name="${BITBUCKET_REPO_FULL_NAME}" \
+      bitbucket.branch="${BITBUCKET_BRANCH}" \
+      bitbucket.commit="${BITBUCKET_COMMIT}" \
+      bitbucket.build.number="${BITBUCKET_BUILD_NUMBER}" \
+      bitbucket.triggered.by="${BITBUCKET_TRIGGERER}" \
+      bitbucket.repo.url="https://bitbucket.org/${BITBUCKET_REPO_FULL_NAME}"
 
 WORKDIR /app
 COPY app/requirements.txt .

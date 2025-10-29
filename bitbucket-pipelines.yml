@@ -2,65 +2,6 @@ image: google/cloud-sdk:latest
 
 pipelines:
   default:
-    # Checkmarx Security Scan
-    - step:
-        name: Checkmarx Security Scan
-        image: checkmarx/ast-cli:latest
-        script:
-          - |
-            /app/bin/cx scan create \
-              -s . \
-              --project-name "$BITBUCKET_REPO_SLUG" \
-              --branch "$BITBUCKET_BRANCH" \
-              --base-uri $CHECKMARX_BASE_URI \
-              --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
-              --tenant $CHECKMARX_TENANT \
-              --apikey $API_KEY \
-              --agent "Bitbucket" \
-              --scan-types sast,sca,iac-security,api-security,scs,containers \
-              --scs-repo-url "https://bitbucket.org/$BITBUCKET_REPO_FULL_NAME" \
-              --scs-repo-token "$BITBUCKET_ACCESS_TOKEN" \
-              | tee checkmarx_scan_output.txt
-          
-          # Parse scan output and create build args file
-          - |
-            echo "=========================================="
-            echo "Parsing Checkmarx scan results..."
-            echo "=========================================="
-            
-            # Extract values from output
-            SCAN_ID=$(grep "Scan ID" checkmarx_scan_output.txt | awk '{print $4}')
-            PROJECT_ID=$(grep "Project ID" checkmarx_scan_output.txt | awk '{print $4}')
-            PROJECT_NAME=$(grep "Project Name" checkmarx_scan_output.txt | awk '{print $4}')
-            SCAN_STATUS=$(grep "Status" checkmarx_scan_output.txt | head -1 | awk '{print $3}')
-            CREATED_AT=$(grep "Created at" checkmarx_scan_output.txt | awk '{print $4}')
-            BRANCH=$(grep "Branch" checkmarx_scan_output.txt | awk '{print $3}')
-            SCAN_TYPE=$(grep "Type" checkmarx_scan_output.txt | awk '{print $3}')
-            INITIATOR=$(grep "Initiator" checkmarx_scan_output.txt | awk '{print $3}')
-            ORIGIN=$(grep "Origin" checkmarx_scan_output.txt | awk '{$1=$2=""; print $0}' | xargs)
-            ENGINES=$(grep "Engines" checkmarx_scan_output.txt | sed 's/.*\[\(.*\)\].*/\1/')
-            
-            # Create environment file for next step
-            cat > checkmarx_metadata.env << EOF
-            export CX_SCAN_ID="${SCAN_ID}"
-            export CX_PROJECT_ID="${PROJECT_ID}"
-            export CX_PROJECT_NAME="${PROJECT_NAME}"
-            export CX_SCAN_STATUS="${SCAN_STATUS}"
-            export CX_CREATED_AT="${CREATED_AT}"
-            export CX_BRANCH="${BRANCH}"
-            export CX_SCAN_TYPE="${SCAN_TYPE}"
-            export CX_INITIATOR="${INITIATOR}"
-            export CX_ORIGIN="${ORIGIN}"
-            export CX_ENGINES="${ENGINES}"
-            EOF
-            
-            echo "✅ Checkmarx metadata captured:"
-            cat checkmarx_metadata.env
-          
-        artifacts:
-          - checkmarx_metadata.env
-          - checkmarx_scan_output.txt
-
     - step:
         name: Build and Deploy to GKE
         services:
@@ -68,58 +9,51 @@ pipelines:
         caches:
           - docker
         script:
-          # Load Checkmarx metadata
-          - echo "=========================================="
-          - echo "Loading Checkmarx scan metadata..."
-          - echo "=========================================="
-          - source checkmarx_metadata.env
-          - 'echo "Scan ID: $CX_SCAN_ID"'
-          - 'echo "Project: $CX_PROJECT_NAME"'          
           # Decode and authenticate with GCP
           - echo $GCP_SA_KEY | base64 --decode > gcp-key.json
           - gcloud auth activate-service-account --key-file=gcp-key.json
           - gcloud config set project $GCP_PROJECT
           - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
 
-          # Build Docker image with Checkmarx metadata as labels
+          # Build Docker image with Bitbucket metadata
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
           - echo "=========================================="
           - 'echo "Building Docker image: $IMAGE_URI"'
+          - 'echo "Repository: $BITBUCKET_REPO_FULL_NAME"'
+          - 'echo "Project ID: $BITBUCKET_PROJECT_KEY"'
           - echo "=========================================="
           - |
             docker build \
               --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
               --build-arg VCS_REF=${BITBUCKET_COMMIT} \
               --build-arg VERSION=${BITBUCKET_BUILD_NUMBER} \
-              --build-arg REPO_URL="https://bitbucket.org/${BITBUCKET_REPO_OWNER}/${BITBUCKET_REPO_SLUG}" \
-              --build-arg REPO_NAME=${BITBUCKET_REPO_SLUG} \
-              --build-arg CX_SCAN_ID="${CX_SCAN_ID}" \
-              --build-arg CX_PROJECT_ID="${CX_PROJECT_ID}" \
-              --build-arg CX_PROJECT_NAME="${CX_PROJECT_NAME}" \
-              --build-arg CX_SCAN_STATUS="${CX_SCAN_STATUS}" \
-              --build-arg CX_CREATED_AT="${CX_CREATED_AT}" \
-              --build-arg CX_BRANCH="${CX_BRANCH}" \
-              --build-arg CX_SCAN_TYPE="${CX_SCAN_TYPE}" \
-              --build-arg CX_INITIATOR="${CX_INITIATOR}" \
-              --build-arg CX_ORIGIN="${CX_ORIGIN}" \
-              --build-arg CX_ENGINES="${CX_ENGINES}" \
+              --build-arg BITBUCKET_REPO_NAME=${BITBUCKET_REPO_SLUG} \
+              --build-arg BITBUCKET_PROJECT_ID=${BITBUCKET_PROJECT_KEY} \
+              --build-arg BITBUCKET_REPO_OWNER=${BITBUCKET_REPO_OWNER} \
+              --build-arg BITBUCKET_REPO_FULL_NAME=${BITBUCKET_REPO_FULL_NAME} \
+              --build-arg BITBUCKET_BRANCH=${BITBUCKET_BRANCH} \
+              --build-arg BITBUCKET_COMMIT=${BITBUCKET_COMMIT} \
+              --build-arg BITBUCKET_BUILD_NUMBER=${BITBUCKET_BUILD_NUMBER} \
+              --build-arg BITBUCKET_TRIGGERER=${BITBUCKET_STEP_TRIGGERER_UUID} \
               -t $IMAGE_URI .
           
-          # Push image
+          # Push image to GAR
           - echo "=========================================="
           - echo "Pushing image to Artifact Registry..."
           - echo "=========================================="
           - docker push $IMAGE_URI
           
-          # Verify labels were applied
+          # Describe image and show labels
           - echo "=========================================="
-          - echo "Verifying Image Labels..."
+          - echo "Image Labels - All Information:"
           - echo "=========================================="
           - gcloud artifacts docker images describe $IMAGE_URI --format=json | jq '.image_summary.metadata.labels'
           
           - echo ""
-          - echo "Checkmarx-specific labels:"
-          - gcloud artifacts docker images describe $IMAGE_URI --format=json | jq '.image_summary.metadata.labels | with_entries(select(.key | startswith("checkmarx")))'
+          - echo "=========================================="
+          - echo "Bitbucket Repository Information:"
+          - echo "=========================================="
+          - gcloud artifacts docker images describe $IMAGE_URI --format=json | jq '.image_summary.metadata.labels | with_entries(select(.key | startswith("bitbucket")))'
 
           # Get GKE credentials
           - echo "=========================================="
