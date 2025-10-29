@@ -24,7 +24,9 @@ pipelines:
           
           # Parse scan output and create build args file
           - |
+            echo "=========================================="
             echo "Parsing Checkmarx scan results..."
+            echo "=========================================="
             
             # Extract values from output
             SCAN_ID=$(grep "Scan ID" checkmarx_scan_output.txt | awk '{print $4}')
@@ -52,7 +54,7 @@ pipelines:
             export CX_ENGINES="${ENGINES}"
             EOF
             
-            echo "✅ Checkmarx metadata captured"
+            echo "✅ Checkmarx metadata captured:"
             cat checkmarx_metadata.env
           
         artifacts:
@@ -67,9 +69,12 @@ pipelines:
           - docker
         script:
           # Load Checkmarx metadata
+          - echo "=========================================="
+          - echo "Loading Checkmarx scan metadata..."
+          - echo "=========================================="
           - source checkmarx_metadata.env
-          - echo "Loaded Checkmarx scan metadata..."
-          
+          - 'echo "Scan ID: $CX_SCAN_ID"'
+          - 'echo "Project: $CX_PROJECT_NAME"'          
           # Decode and authenticate with GCP
           - echo $GCP_SA_KEY | base64 --decode > gcp-key.json
           - gcloud auth activate-service-account --key-file=gcp-key.json
@@ -78,7 +83,9 @@ pipelines:
 
           # Build Docker image with Checkmarx metadata as labels
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
-          - 'echo "Building Docker image with Checkmarx metadata: $IMAGE_URI"'
+          - echo "=========================================="
+          - 'echo "Building Docker image: $IMAGE_URI"'
+          - echo "=========================================="
           - |
             docker build \
               --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
@@ -99,13 +106,25 @@ pipelines:
               -t $IMAGE_URI .
           
           # Push image
+          - echo "=========================================="
+          - echo "Pushing image to Artifact Registry..."
+          - echo "=========================================="
           - docker push $IMAGE_URI
           
           # Verify labels were applied
-          - echo "Verifying Checkmarx labels on image..."
-          - gcloud artifacts docker images describe $IMAGE_URI --format=json | grep -A 20 "labels"
+          - echo "=========================================="
+          - echo "Verifying Image Labels..."
+          - echo "=========================================="
+          - gcloud artifacts docker images describe $IMAGE_URI --format=json | jq '.image_summary.metadata.labels'
+          
+          - echo ""
+          - echo "Checkmarx-specific labels:"
+          - gcloud artifacts docker images describe $IMAGE_URI --format=json | jq '.image_summary.metadata.labels | with_entries(select(.key | startswith("checkmarx")))'
 
           # Get GKE credentials
+          - echo "=========================================="
+          - echo "Deploying to GKE..."
+          - echo "=========================================="
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
           - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_REGION --project $GCP_PROJECT
 
@@ -114,6 +133,10 @@ pipelines:
           - sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
           - kubectl apply -f k8s/service.yaml
           - kubectl apply -f k8s/hpa.yaml
+          
+          - echo "=========================================="
+          - echo "✅ Deployment completed successfully!"
+          - echo "=========================================="
 
 definitions:
   services:
