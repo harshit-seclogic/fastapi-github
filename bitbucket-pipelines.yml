@@ -15,60 +15,80 @@ pipelines:
           - gcloud config set project $GCP_PROJECT
           - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
 
-          # Build Docker image with Bitbucket metadata
+          # Set image URI
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
+          
+          # Debug: Show environment variables
           - echo "=========================================="
-          - 'echo "Building Docker image: $IMAGE_URI"'
-          - 'echo "Repository: $BITBUCKET_REPO_FULL_NAME"'
-          - 'echo "Project ID: $BITBUCKET_PROJECT_KEY"'
+          - echo "Bitbucket Environment Variables:"
+          - echo "=========================================="
+          - echo "BITBUCKET_REPO_SLUG = ${BITBUCKET_REPO_SLUG}"
+          - echo "BITBUCKET_PROJECT_KEY = ${BITBUCKET_PROJECT_KEY}"
+          - echo "BITBUCKET_REPO_OWNER = ${BITBUCKET_REPO_OWNER}"
+          - echo "BITBUCKET_REPO_FULL_NAME = ${BITBUCKET_REPO_FULL_NAME}"
+          - echo "BITBUCKET_BRANCH = ${BITBUCKET_BRANCH}"
+          - echo "BITBUCKET_COMMIT = ${BITBUCKET_COMMIT}"
+          - echo "BITBUCKET_BUILD_NUMBER = ${BITBUCKET_BUILD_NUMBER}"
+          - echo "BITBUCKET_STEP_TRIGGERER_UUID = ${BITBUCKET_STEP_TRIGGERER_UUID}"
+          
+          # Build Docker image with ALL metadata
+          - echo "=========================================="
+          - 'echo "Building Docker image: ${IMAGE_URI}"'
           - echo "=========================================="
           - |
             docker build \
-              --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-              --build-arg VCS_REF=${BITBUCKET_COMMIT} \
-              --build-arg VERSION=${BITBUCKET_BUILD_NUMBER} \
-              --build-arg BITBUCKET_REPO_NAME=${BITBUCKET_REPO_SLUG} \
-              --build-arg BITBUCKET_PROJECT_ID=${BITBUCKET_PROJECT_KEY} \
-              --build-arg BITBUCKET_REPO_OWNER=${BITBUCKET_REPO_OWNER} \
-              --build-arg BITBUCKET_REPO_FULL_NAME=${BITBUCKET_REPO_FULL_NAME} \
-              --build-arg BITBUCKET_BRANCH=${BITBUCKET_BRANCH} \
-              --build-arg BITBUCKET_COMMIT=${BITBUCKET_COMMIT} \
-              --build-arg BITBUCKET_BUILD_NUMBER=${BITBUCKET_BUILD_NUMBER} \
-              --build-arg BITBUCKET_TRIGGERER=${BITBUCKET_STEP_TRIGGERER_UUID} \
-              -t $IMAGE_URI .
+              --build-arg BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+              --build-arg VCS_REF="${BITBUCKET_COMMIT}" \
+              --build-arg VERSION="${BITBUCKET_BUILD_NUMBER}" \
+              --build-arg BITBUCKET_REPO_NAME="${BITBUCKET_REPO_SLUG}" \
+              --build-arg BITBUCKET_PROJECT_ID="${BITBUCKET_PROJECT_KEY}" \
+              --build-arg BITBUCKET_REPO_OWNER="${BITBUCKET_REPO_OWNER}" \
+              --build-arg BITBUCKET_REPO_FULL_NAME="${BITBUCKET_REPO_FULL_NAME}" \
+              --build-arg BITBUCKET_BRANCH="${BITBUCKET_BRANCH}" \
+              --build-arg BITBUCKET_COMMIT="${BITBUCKET_COMMIT}" \
+              --build-arg BITBUCKET_BUILD_NUMBER="${BITBUCKET_BUILD_NUMBER}" \
+              --build-arg BITBUCKET_TRIGGERER="${BITBUCKET_STEP_TRIGGERER_UUID}" \
+              -t "${IMAGE_URI}" .
+          
+          # Inspect local image labels BEFORE pushing
+          - echo "=========================================="
+          - echo "Verifying labels on LOCAL image:"
+          - echo "=========================================="
+          - docker inspect "${IMAGE_URI}" --format='{{json .Config.Labels}}' | python3 -m json.tool
           
           # Push image to GAR
           - echo "=========================================="
           - echo "Pushing image to Artifact Registry..."
           - echo "=========================================="
-          - docker push $IMAGE_URI
+          - docker push "${IMAGE_URI}"
           
-          # Describe image and show labels in JSON format
+          # Wait a moment for GAR to process
+          - sleep 5
+          
+          # Describe image in GAR and show labels
           - echo "=========================================="
-          - echo "Image Labels (JSON Format):"
+          - echo "Verifying labels in GAR (JSON Format):"
           - echo "=========================================="
-          - |
-            gcloud artifacts docker images describe $IMAGE_URI --format=json > /tmp/image_info.json
-            python3 << 'EOF'
-            import json
-            with open('/tmp/image_info.json') as f:
-                data = json.load(f)
-                labels = data.get('image_summary', {}).get('metadata', {}).get('labels', {})
-                print(json.dumps(labels, indent=2, sort_keys=True))
-            EOF
+          - gcloud artifacts docker images describe "${IMAGE_URI}" --format=json
           
           - echo ""
           - echo "=========================================="
-          - echo "Bitbucket Labels Only (JSON Format):"
+          - echo "Extracting Labels from GAR:"
           - echo "=========================================="
           - |
+            gcloud artifacts docker images describe "${IMAGE_URI}" --format=json > /tmp/image_info.json
             python3 << 'EOF'
             import json
             with open('/tmp/image_info.json') as f:
                 data = json.load(f)
                 labels = data.get('image_summary', {}).get('metadata', {}).get('labels', {})
-                bitbucket_labels = {k: v for k, v in labels.items() if k.startswith('bitbucket')}
-                print(json.dumps(bitbucket_labels, indent=2, sort_keys=True))
+                if labels:
+                    print("Labels found:")
+                    print(json.dumps(labels, indent=2, sort_keys=True))
+                else:
+                    print("⚠️  No labels found in GAR!")
+                    print("Full response:")
+                    print(json.dumps(data, indent=2))
             EOF
 
           # Get GKE credentials
@@ -80,7 +100,7 @@ pipelines:
 
           # Deploy to Kubernetes
           - kubectl apply -f k8s/namespace.yaml --validate=false
-          - sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
+          - sed "s|REPLACE_WITH_IMAGE|${IMAGE_URI}|g" k8s/deployment.yaml | kubectl apply -f -
           - kubectl apply -f k8s/service.yaml
           - kubectl apply -f k8s/hpa.yaml
           
