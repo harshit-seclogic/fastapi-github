@@ -17,19 +17,19 @@ pipelines:
 
           # Build image
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
-          - 'echo "Building Docker image: $IMAGE_URI"'
-          - docker build -t "$IMAGE_URI" .
+          - 'echo "Building Docker image: ${IMAGE_URI}"'
+          - docker build -t "${IMAGE_URI}" .
 
-          # Generate SBOM
+          # Push image first (needed for Syft)
+          - echo "Pushing image to Artifact Registry..."
+          - docker push "${IMAGE_URI}"
+
+          # Generate SBOM from pushed image
           - echo "Generating SBOM..."
-          - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest "$IMAGE_URI" -o json > sbom.json
-
-          # Push image early for Checkmarx
-          - echo "Pushing image..."
-          - docker push "$IMAGE_URI"
+          - docker run --rm anchore/syft:latest "${IMAGE_URI}" -o json > sbom.json
 
         artifacts:
-          - sbom.json   # This makes sbom.json available to next steps
+          - sbom.json   # Available for next steps
 
     - step:
         name: Security Scans
@@ -37,39 +37,39 @@ pipelines:
         services:
           - docker
         script:
-          # SBOM is automatically available
-          - 'echo "Using SBOM: $(ls -la sbom.json)"'
+          - echo "Using SBOM file:"
+          - ls -la sbom.json
 
           # Container Scan
           - echo "Running Checkmarx container scan..."
-          - |
-            /app/bin/cx scan create \
-              --project-name "$BITBUCKET_REPO_SLUG" \
-              --branch "$BITBUCKET_BRANCH" \
-              --base-uri "$CHECKMARX_BASE_URI" \
-              --base-auth-uri "$CHECKMARX_BASE_AUTH_URI" \
-              --tenant "$CHECKMARX_TENANT" \
-              --apikey "$API_KEY" \
-              --agent "Bitbucket" \
-              --scan-types container \
-              --container-image "$IMAGE_URI" \
-              --sbom-path sbom.json \
-              --async
+          - >
+            /app/bin/cx scan create
+            --project-name "$BITBUCKET_REPO_SLUG"
+            --branch "$BITBUCKET_BRANCH"
+            --base-uri "$CHECKMARX_BASE_URI"
+            --base-auth-uri "$CHECKMARX_BASE_AUTH_URI"
+            --tenant "$CHECKMARX_TENANT"
+            --apikey "$API_KEY"
+            --agent "Bitbucket"
+            --scan-types container
+            --container-image "$IMAGE_URI"
+            --sbom-path sbom.json
+            --async
 
           # Source Code Scan
           - echo "Running SAST/SCA scans..."
-          - |
-            /app/bin/cx scan create \
-              -s . \
-              --project-name "$BITBUCKET_REPO_SLUG" \
-              --branch "$BITBUCKET_BRANCH" \
-              --base-uri "$CHECKMARX_BASE_URI" \
-              --base-auth-uri "$CHECKMARX_BASE_AUTH_URI" \
-              --tenant "$CHECKMARX_TENANT" \
-              --apikey "$API_KEY" \
-              --agent "Bitbucket" \
-              --scan-types sast,sca,kics,apisec,scs \
-              --async
+          - >
+            /app/bin/cx scan create
+            -s .
+            --project-name "$BITBUCKET_REPO_SLUG"
+            --branch "$BITBUCKET_BRANCH"
+            --base-uri "$CHECKMARX_BASE_URI"
+            --base-auth-uri "$CHECKMARX_BASE_AUTH_URI"
+            --tenant "$CHECKMARX_TENANT"
+            --apikey "$API_KEY"
+            --agent "Bitbucket"
+            --scan-types sast,sca,kics,apisec,scs
+            --async
 
     - step:
         name: Deploy to GKE
@@ -79,7 +79,7 @@ pipelines:
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
           - gcloud container clusters get-credentials "$GKE_CLUSTER" --zone "$GKE_ZONE" --project "$GCP_PROJECT"
           - kubectl apply -f k8s/namespace.yaml --validate=false
-          - sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
+          - sed "s|REPLACE_WITH_IMAGE|${IMAGE_URI}|g" k8s/deployment.yaml | kubectl apply -f -
           - kubectl apply -f k8s/service.yaml
           - kubectl apply -f k8s/hpa.yaml
 
