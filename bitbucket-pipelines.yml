@@ -3,7 +3,7 @@ image: google/cloud-sdk:latest
 pipelines:
   default:
     - step:
-        name: 🏗️ Build and Push Docker Image
+        name: 🏗️ Build and Push Docker Image 
         services:
           - docker
         caches:
