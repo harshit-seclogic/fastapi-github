@@ -3,7 +3,7 @@ image: google/cloud-sdk:latest
 pipelines:
   default:
     - step:
-        name: Build and Deploy to GKE
+        name: 🏗️ Build and Push Docker Image
         services:
           - docker
         caches:
@@ -15,11 +15,12 @@ pipelines:
           - gcloud config set project $GCP_PROJECT
           - gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev -q
 
-          # Build Docker image with Bitbucket metadata
+          # Build metadata
           - export IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${GAR_REPO}/${IMAGE_NAME}:${BITBUCKET_COMMIT}"
           - export BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          - 'echo "Building Docker image: $IMAGE_URI"'
-          - 'echo "Build Date: $BUILD_DATE"'
+
+          # Build image with metadata labels
+          - 'echo "🚀 Building Docker image: $IMAGE_URI"'
           - |
             docker build \
               --label "bitbucket.repo.slug=${BITBUCKET_REPO_SLUG}" \
@@ -32,37 +33,69 @@ pipelines:
               --label "bitbucket.pipeline.uuid=${BITBUCKET_PIPELINE_UUID}" \
               --label "bitbucket.repo.url=https://bitbucket.org/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}" \
               --label "build.date=${BUILD_DATE}" \
-              -t $IMAGE_URI \
-              .
-          
-          # Verify labels were added (show in pipeline logs)
+              -t $IMAGE_URI .
+
+          # Verify labels
           - echo "=========================================="
-          - echo "Verifying Bitbucket Metadata Labels"
-          - echo "=========================================="
+          - echo "🔍 Verifying Bitbucket Metadata Labels"
           - docker inspect $IMAGE_URI --format='{{range $key, $value := .Config.Labels}}{{$key}}={{$value}}{{println}}{{end}}'
           - echo "=========================================="
-          
-          # Push image to Artifact Registry
+
+          # Push image
           - docker push $IMAGE_URI
-          - echo "✅ Image pushed successfully to GAR"
-          - echo "Image URI:" $IMAGE_URI
-          - echo ""
-          - echo "To inspect metadata after deployment, run:"
-          - echo "  docker pull $IMAGE_URI"
-          - echo "  docker inspect $IMAGE_URI --format='{{json .Config.Labels}}' | python3 -m json.tool"
+          - 'echo "✅ Image pushed successfully to GAR: $IMAGE_URI"'
+
+          # Save image URI for next step
+          - echo $IMAGE_URI > image_uri.txt
+
+        artifacts:
+          - image_uri.txt
+# Checkmarx Security Scan
+    - step:
+        name: Checkmarx Security Scan
+        image: checkmarx/ast-cli:latest
+        script:
+          - |
+            /app/bin/cx scan create \
+              -s . \
+              --project-name "$BITBUCKET_REPO_SLUG" \
+              --branch "$BITBUCKET_BRANCH" \
+              --base-uri $CHECKMARX_BASE_URI \
+              --base-auth-uri $CHECKMARX_BASE_AUTH_URI \
+              --tenant $CHECKMARX_TENANT \
+              --apikey $API_KEY \
+              --agent "Bitbucket" \
+              --scan-types sast,sca,iac-security,api-security,scs,containers \
+              --scs-repo-url "https://bitbucket.org/$BITBUCKET_REPO_FULL_NAME" \
+              --scs-repo-token "$BITBUCKET_ACCESS_TOKEN" \
+          
+          - echo "✅ Checkmarx scan completed. View results in Checkmarx One UI"
+
+    - step:
+        name: 🚢 Deploy to GKE
+        deployment: production
+        script:
+          # Decode and authenticate with GCP
+          - echo $GCP_SA_KEY | base64 --decode > gcp-key.json
+          - gcloud auth activate-service-account --key-file=gcp-key.json
+          - gcloud config set project $GCP_PROJECT
 
           # Get GKE credentials
           - export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-          - gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_REGION --project $GCP_PROJECT
+          - gcloud container clusters get-credentials $GKE_CLUSTER --region $GKE_REGION --project $GCP_PROJECT
 
-          # Deploy to Kubernetes
+          # Read image URI from artifact
+          - export IMAGE_URI=$(cat image_uri.txt)
+          - 'echo "Deploying image: $IMAGE_URI"'
+
+          # Apply Kubernetes manifests
           - kubectl apply -f k8s/namespace.yaml --validate=false
           - sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
           - kubectl apply -f k8s/service.yaml
           - kubectl apply -f k8s/hpa.yaml
-          
+
           - echo "=========================================="
-          - echo "Deployment Complete!"
+          - echo "✅ Deployment Complete!"
           - echo "Image with metadata:" $IMAGE_URI
           - echo "=========================================="
 
