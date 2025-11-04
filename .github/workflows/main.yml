@@ -36,9 +36,9 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set Environment Variables
+      - name: Set Image Metadata
         run: |
-          echo "IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${GITHUB_SHA}" >> $GITHUB_ENV
+          echo "IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}" >> $GITHUB_ENV
           echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
 
       - name: 🚀 Build Docker Image with Metadata Labels
@@ -46,7 +46,7 @@ jobs:
           docker build \
             --label "github.repo=${{ github.repository }}" \
             --label "github.actor=${{ github.actor }}" \
-            --label "github.sha=${GITHUB_SHA}" \
+            --label "github.sha=${{ github.sha }}" \
             --label "build.date=${BUILD_DATE}" \
             -t $IMAGE_URI .
 
@@ -84,12 +84,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup kubectl for EKS
-        run: |
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
-          echo "✅ Kubeconfig setup complete"
-          kubectl get nodes || echo "⚠️ Could not list nodes yet"
-
       - name: Download image URI
         uses: actions/download-artifact@v4
         with:
@@ -99,6 +93,12 @@ jobs:
         id: read-image
         run: echo "IMAGE_URI=$(cat image_uri.txt)" >> $GITHUB_ENV
 
+      - name: Setup kubectl for EKS
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          echo "✅ Kubeconfig setup complete"
+          kubectl get nodes || echo "⚠️ Could not list nodes yet"
+
       - name: Apply Kubernetes Manifests
         run: |
           echo "Deploying image: $IMAGE_URI"
@@ -106,14 +106,14 @@ jobs:
           # Ensure namespace exists
           kubectl apply -f k8s/namespace.yaml --validate=false
 
-          # Apply manifests
+          # Apply manifests with image substitution
           sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/hpa.yaml
 
           echo "=========================================="
           echo "✅ Deployment Complete!"
-          echo "Cluster: $CLUSTER_NAME"
-          echo "Namespace: $NAMESPACE"
+          echo "Cluster: ${{ env.CLUSTER_NAME }}"
+          echo "Namespace: ${{ env.NAMESPACE }}"
           echo "Image Deployed: $IMAGE_URI"
           echo "=========================================="
