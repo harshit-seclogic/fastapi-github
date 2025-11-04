@@ -7,13 +7,14 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 env:
   AWS_REGION: ap-south-1
   ECR_REPO: fastapi-github
   CLUSTER_NAME: disco-dog
   ECR_REGISTRY: 941086635353.dkr.ecr.ap-south-1.amazonaws.com
-  NAMESPACE: default
+  NAMESPACE: fastapi
 
 jobs:
   build-and-push:
@@ -85,10 +86,9 @@ jobs:
 
       - name: Setup kubectl for EKS
         run: |
-          mkdir -p ~/.kube
           aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
           echo "✅ Kubeconfig setup complete"
-          kubectl get svc -A || echo "⚠️ Could not list services yet"
+          kubectl get nodes || echo "⚠️ Could not list nodes yet"
 
       - name: Download image URI
         uses: actions/download-artifact@v4
@@ -96,18 +96,24 @@ jobs:
           name: image_uri
 
       - name: Read Image URI
+        id: read-image
         run: echo "IMAGE_URI=$(cat image_uri.txt)" >> $GITHUB_ENV
 
       - name: Apply Kubernetes Manifests
         run: |
           echo "Deploying image: $IMAGE_URI"
+
+          # Ensure namespace exists
           kubectl apply -f k8s/namespace.yaml --validate=false
+
+          # Apply manifests
           sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/hpa.yaml
 
           echo "=========================================="
           echo "✅ Deployment Complete!"
-          echo "Cluster: disco-dog"
+          echo "Cluster: $CLUSTER_NAME"
+          echo "Namespace: $NAMESPACE"
           echo "Image Deployed: $IMAGE_URI"
           echo "=========================================="
