@@ -3,7 +3,7 @@ name: Build and Deploy to AWS EKS (disco-dog)
 on:
   push:
     branches:
-      - main
+      - hf
 
 permissions:
   contents: read
