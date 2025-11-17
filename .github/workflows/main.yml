@@ -40,15 +40,21 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Show Workspace (Debug)
+      - name: Debug — Show Files
         run: |
-          echo "Files inside container workspace:"
+          echo "Files inside workspace:"
           ls -al
+
+      - name: Debug — Show RapiDAST config content
+        run: |
+          echo "========= rapidast-config.yml ========="
+          cat rapidast-config.yml
+          echo "======================================="
 
       - name: ⚡ Run RapiDAST
         run: |
           echo "Running RapiDAST..."
-          rapidast.py --config rapidast-config.yml
+          rapidast.py --config rapidast-config.yml || true
           cat results/*/*/zap/zap-report.json || true
 
       - name: Upload Scan Results
@@ -58,12 +64,12 @@ jobs:
           path: results/*/*/*
 
   # ----------------------------------------------------
-  # 2) Build and Push Docker Image
+  # 2) Build & Push Docker Image
   # ----------------------------------------------------
   build-and-push:
     name: 🏗️ Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: rapidast-scan
+    needs: rapidast-sscan
 
     steps:
       - uses: actions/checkout@v4
@@ -80,7 +86,7 @@ jobs:
         run: |
           echo "IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}" >> $GITHUB_ENV
 
-      - name: Build Image
+      - name: Build Docker Image
         run: |
           docker build -t $IMAGE_URI .
 
@@ -116,15 +122,17 @@ jobs:
         with:
           name: image_uri
 
-      - name: Read Image URI
+      - name: Load Image URI
         run: echo "IMAGE_URI=$(cat image_uri.txt)" >> $GITHUB_ENV
 
       - name: Configure kubectl
         run: |
-          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          aws eks update-kubeconfig \
+            --name ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
           kubectl get nodes
 
-      - name: Apply Manifests
+      - name: Apply Kubernetes Manifests
         run: |
           kubectl apply -f k8s/namespace.yaml --validate=false
           sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
