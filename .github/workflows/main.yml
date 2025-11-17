@@ -1,6 +1,7 @@
-name: Build and Deploy to AWS EKS (disco-dog)
+name: RapiDAST + Build and Deploy to AWS EKS (disco-dog)
 
 on:
+  pull_request:
   push:
     branches:
       - hf
@@ -16,16 +17,51 @@ env:
   ECR_REGISTRY: 941086635353.dkr.ecr.ap-south-1.amazonaws.com
   NAMESPACE: fastapi
 
+# -----------------------------------------
+# 1) RapiDAST Security Scan Job
+# -----------------------------------------
+
 jobs:
-  build-and-push:
-    name: 🏗️ Build and Push Docker Image to ECR
+  rapidast-scan:
+    name: 🔒 RapiDAST Security Scan
     runs-on: ubuntu-latest
+    container:
+      image: quay.io/redhatproductsecurity/rapidast:latest
+      options: --user root
+
+    services:
+      httpd:
+        image: docker.io/httpd:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run RapiDAST
+        run: |
+          rapidast.py --config rapidast-config.yml
+          echo "----- ZAP Results -----"
+          cat results/*/*/zap/zap-report.json || true
+
+      - name: Upload RapiDAST Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapidast-results
+          path: results/*/*/*
+
+# -----------------------------------------
+# 2) Build and Push Docker Image
+# -----------------------------------------
+
+  build-and-push:
+    name: 🏗️ Build & Push Docker Image to ECR
+    runs-on: ubuntu-latest
+    needs: rapidast-scan   # ⬅️ SECURITY GATE: Only build if scan is successful
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (using Access Keys)
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -41,7 +77,7 @@ jobs:
           echo "IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}" >> $GITHUB_ENV
           echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
 
-      - name: 🚀 Build Docker Image with Metadata Labels
+      - name: Build Docker Image
         run: |
           docker build \
             --label "github.repo=${{ github.repository }}" \
@@ -50,16 +86,9 @@ jobs:
             --label "build.date=${BUILD_DATE}" \
             -t $IMAGE_URI .
 
-      - name: 🔍 Verify Metadata Labels
-        run: |
-          echo "=========================================="
-          docker inspect $IMAGE_URI --format='{{range $key, $value := .Config.Labels}}{{$key}}={{$value}}{{println}}{{end}}'
-          echo "=========================================="
-
       - name: Push Docker Image to ECR
         run: |
           docker push $IMAGE_URI
-          echo "✅ Image pushed successfully: $IMAGE_URI"
           echo $IMAGE_URI > image_uri.txt
 
       - name: Upload image URI artifact
@@ -68,8 +97,12 @@ jobs:
           name: image_uri
           path: image_uri.txt
 
+# -----------------------------------------
+# 3) Deploy to EKS
+# -----------------------------------------
+
   deploy:
-    name: 🚢 Deploy to EKS (disco-dog)
+    name: 🚢 Deploy to EKS
     runs-on: ubuntu-latest
     needs: build-and-push
 
@@ -77,7 +110,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (using Access Keys)
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -90,30 +123,18 @@ jobs:
           name: image_uri
 
       - name: Read Image URI
-        id: read-image
         run: echo "IMAGE_URI=$(cat image_uri.txt)" >> $GITHUB_ENV
 
       - name: Setup kubectl for EKS
         run: |
           aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-          echo "✅ Kubeconfig setup complete"
-          kubectl get nodes || echo "⚠️ Could not list nodes yet"
+          kubectl get nodes
 
-      - name: Apply Kubernetes Manifests
+      - name: Deploy to EKS
         run: |
-          echo "Deploying image: $IMAGE_URI"
-
-          # Ensure namespace exists
           kubectl apply -f k8s/namespace.yaml --validate=false
-
-          # Apply manifests with image substitution
           sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/hpa.yaml
 
-          echo "=========================================="
-          echo "✅ Deployment Complete!"
-          echo "Cluster: ${{ env.CLUSTER_NAME }}"
-          echo "Namespace: ${{ env.NAMESPACE }}"
-          echo "Image Deployed: $IMAGE_URI"
-          echo "=========================================="
+          echo "Deployment completed to EKS"
