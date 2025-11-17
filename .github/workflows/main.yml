@@ -1,4 +1,4 @@
-name: RapiDAST + Build and Deploy to AWS EKS (disco-dog)
+name: RapiDAST Security Scan + Build & Deploy to EKS
 
 on:
   pull_request:
@@ -13,31 +13,43 @@ permissions:
 env:
   AWS_REGION: ap-south-1
   ECR_REPO: fastapi-github
-  CLUSTER_NAME: disco-dog
   ECR_REGISTRY: 941086635353.dkr.ecr.ap-south-1.amazonaws.com
+  CLUSTER_NAME: disco-dog
   NAMESPACE: fastapi
 
-# -----------------------------------------
+# ----------------------------------------------------
 # 1) RapiDAST Security Scan Job
-# -----------------------------------------
+# ----------------------------------------------------
 
 jobs:
   rapidast-scan:
     name: 🔒 RapiDAST Security Scan
     runs-on: ubuntu-latest
+
     container:
       image: quay.io/redhatproductsecurity/rapidast:latest
       options: --user root
+      volumes:
+        - ${{ github.workspace }}:/workspace  # Mount repo inside container
 
     services:
-      httpd:
-        image: docker.io/httpd:latest
+      app:
+        image: docker.io/httpd:latest   # Replace with your app container if needed
+        ports:
+          - 80:80
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Run RapiDAST
+      - name: Show Files (Debug)
         run: |
+          echo "📁 Workspace files inside container:"
+          ls -al /workspace
+
+      - name: Run RapiDAST Scan
+        run: |
+          cd /workspace
           rapidast.py --config rapidast-config.yml
           echo "----- ZAP Results -----"
           cat results/*/*/zap/zap-report.json || true
@@ -48,14 +60,14 @@ jobs:
           name: rapidast-results
           path: results/*/*/*
 
-# -----------------------------------------
-# 2) Build and Push Docker Image
-# -----------------------------------------
+# ----------------------------------------------------
+# 2) Build & Push Docker Image
+# ----------------------------------------------------
 
   build-and-push:
-    name: 🏗️ Build & Push Docker Image to ECR
+    name: 🏗️ Build & Push to ECR
     runs-on: ubuntu-latest
-    needs: rapidast-scan   # ⬅️ SECURITY GATE: Only build if scan is successful
+    needs: rapidast-scan   # ← Security gate (build only if scan passed)
 
     steps:
       - name: Checkout Code
@@ -68,11 +80,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
+      - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set Image Metadata
+      - name: Generate Image Metadata
         run: |
           echo "IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}" >> $GITHUB_ENV
           echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
@@ -86,23 +97,23 @@ jobs:
             --label "build.date=${BUILD_DATE}" \
             -t $IMAGE_URI .
 
-      - name: Push Docker Image to ECR
+      - name: Push Docker Image
         run: |
           docker push $IMAGE_URI
           echo $IMAGE_URI > image_uri.txt
 
-      - name: Upload image URI artifact
+      - name: Upload Image URI
         uses: actions/upload-artifact@v4
         with:
           name: image_uri
           path: image_uri.txt
 
-# -----------------------------------------
+# ----------------------------------------------------
 # 3) Deploy to EKS
-# -----------------------------------------
+# ----------------------------------------------------
 
   deploy:
-    name: 🚢 Deploy to EKS
+    name: 🚢 Deploy to AWS EKS
     runs-on: ubuntu-latest
     needs: build-and-push
 
@@ -117,24 +128,32 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Download image URI
+      - name: Download Image URI
         uses: actions/download-artifact@v4
         with:
           name: image_uri
 
-      - name: Read Image URI
-        run: echo "IMAGE_URI=$(cat image_uri.txt)" >> $GITHUB_ENV
-
-      - name: Setup kubectl for EKS
+      - name: Export Image URI
         run: |
-          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          echo "IMAGE_URI=$(cat image_uri.txt)" >> $GITHUB_ENV
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
           kubectl get nodes
 
-      - name: Deploy to EKS
+      - name: Deploy to Kubernetes
         run: |
+          echo "Deploying image: $IMAGE_URI"
+
           kubectl apply -f k8s/namespace.yaml --validate=false
+
           sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
+
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/hpa.yaml
 
-          echo "Deployment completed to EKS"
+          echo "🎉 Deployment Successful!"
