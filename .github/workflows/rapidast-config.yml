@@ -1,0 +1,27 @@
+version: "1.0"
+
+application:
+  name: "bookstore-app"
+  url: "http://localhost:5000"
+  apiUrl: "http://localhost:5000/openapi.json"
+
+authentication:
+  method: "cookie"
+  loginUrl: "http://localhost:5000/login"
+  usernameField: "username"
+  passwordField: "password"
+  username: "testuser"
+  password: "testpass"
+
+scanner:
+  type: "zap"
+  policies:
+    - "API-Security"
+    - "Injection"
+    - "XSS"
+
+output:
+  format:
+    - "json"
+    - "html"
+  directory: "/results"
