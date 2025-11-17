@@ -2,12 +2,12 @@ version: "1.0"
 
 application:
   name: "bookstore-app"
-  url: "http://localhost:5000"
-  apiUrl: "http://localhost:5000/openapi.json"
+  url: "http://app"  # service name inside GitHub Actions
+  apiUrl: "http://app/openapi.json"
 
 authentication:
   method: "cookie"
-  loginUrl: "http://localhost:5000/login"
+  loginUrl: "http://app/login"
   usernameField: "username"
   passwordField: "password"
   username: "testuser"
