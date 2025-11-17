@@ -22,9 +22,9 @@ scanner:
       - "API-Security"
       - "Injection"
       - "XSS"
-    spider: true        # enables crawling
-    spiderAjax: true    # JS capable spider
-    apiScan: true       # needed for API scanning
+    apiScan: true
+    spider: true
+    spiderAjax: true
 
 results:
   output:
