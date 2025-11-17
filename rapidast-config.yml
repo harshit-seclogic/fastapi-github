@@ -1,27 +1,34 @@
-version: "1.0"
+configVersion: "2.0"
 
 application:
   name: "bookstore-app"
-  url: "http://app"  # service name inside GitHub Actions
-  apiUrl: "http://app/openapi.json"
+  url: "http://app:80"
+  apiScan:
+    openApiUrl: "http://app:80/openapi.json"
 
 authentication:
   method: "cookie"
-  loginUrl: "http://app/login"
-  usernameField: "username"
-  passwordField: "password"
-  username: "testuser"
-  password: "testpass"
+  login:
+    url: "http://app:80/login"
+    usernameField: "username"
+    passwordField: "password"
+    username: "testuser"
+    password: "testpass"
 
 scanner:
-  type: "zap"
-  policies:
-    - "API-Security"
-    - "Injection"
-    - "XSS"
+  zap:
+    enabled: true
+    policies:
+      - "API-Security"
+      - "Injection"
+      - "XSS"
+    spider: true        # enables crawling
+    spiderAjax: true    # JS capable spider
+    apiScan: true       # needed for API scanning
 
-output:
-  format:
-    - "json"
-    - "html"
-  directory: "/results"
+results:
+  output:
+    formats:
+      - json
+      - html
+    directory: "results"
