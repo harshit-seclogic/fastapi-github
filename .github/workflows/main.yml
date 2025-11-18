@@ -19,50 +19,26 @@ env:
   NAMESPACE: fastapi
 
 jobs:
-
-  # ----------------------------------------------------
-  # 1) RapiDAST Scan
-  # ----------------------------------------------------
-  rapidast-scan:
-    name: 🔒 RapiDAST Security Scan
+  dast:
     runs-on: ubuntu-latest
 
-    container:
-      image: quay.io/redhatproductsecurity/rapidast:latest
-      options: --user root
-
-    services:
-      app:
-        image: docker.io/httpd:latest
-        ports:
-          - 80:80
-
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Debug — Show Files
-        run: |
-          echo "Files inside workspace:"
-          ls -al
+    - name: Run RapiDAST
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}/rapiddast:/rapiddast \
+          quay.io/redhatproductsecurity/rapiddast:latest \
+          rapiddast scan -c /rapiddast/config.yaml \
+          --output /rapiddast/report
 
-      - name: Debug — Show RapiDAST Config
-        run: |
-          echo "========= rapidast-config.yml ========="
-          cat rapidast-config.yml
-          echo "======================================="
-
-      - name: Run RapiDAST
-        run: |
-          rapidast.py --config rapidast-config.yml || true
-          cat results/*/*/zap/zap-report.json || true
-
-      - name: Upload Scan Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: rapidast-results
-          path: results/*/*/*
-
+    - name: Upload Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: dast-report
+        path: rapiddast/report/
   # ----------------------------------------------------
   # 2) Build & Push Docker Image
   # ----------------------------------------------------
