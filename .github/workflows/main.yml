@@ -2,25 +2,27 @@ name: RapiDAST Scan
 
 on:
   workflow_dispatch:
+    branches:
+      - rapidtest
 
 jobs:
   dast:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Run RapiDAST
-      run: |
-        docker run --rm \
-          -v ${{ github.workspace }}/rapiddast:/rapiddast \
-          quay.io/redhatproductsecurity/rapiddast:latest \
-          rapiddast scan -c /rapiddast/config.yaml \
-          --output /rapiddast/report
+      - name: Run RapiDAST
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/rapiddast:/rapiddast \
+            quay.io/redhatproductsecurity/rapiddast:latest \
+            rapiddast scan -c /rapiddast/config.yaml \
+            --output /rapiddast/report
 
-    - name: Upload Report
-      uses: actions/upload-artifact@v4
-      with:
-        name: dast-report
-        path: rapiddast/report/
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-report
+          path: rapiddast/report/
