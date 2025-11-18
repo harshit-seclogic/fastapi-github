@@ -1,28 +1,30 @@
-name: RapiDAST Scan
+name: Private URL Access Test
 
 on:
   workflow_dispatch:
-    branches:
-      - rapidtest
 
 jobs:
-  dast:
+  test-access:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Try accessing private URL
+      run: |
+        URL="https://example.com/private-endpoint"
 
-      - name: Run RapiDAST
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}/rapiddast:/rapiddast \
-            quay.io/redhatproductsecurity/rapiddast:latest \
-            rapiddast scan -c /rapiddast/config.yaml \
-            --output /rapiddast/report
+        echo "Testing access to Private URL..."
 
-      - name: Upload Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: dast-report
-          path: rapiddast/report/
+        STATUS=$(curl -u "${PRIVATE_USERNAME}:${PRIVATE_PASSWORD}" \
+          -o /dev/null -s -w "%{http_code}" "$URL")
+
+        echo "HTTP Status: $STATUS"
+
+        if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+          echo "✅ Access successful!"
+        else
+          echo "❌ Access failed!"
+          exit 1
+        fi
+      env:
+        PRIVATE_USERNAME: ayushi@seclogic.io
+        PRIVATE_PASSWORD: mikku@19
