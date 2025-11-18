@@ -5,18 +5,17 @@ on:
   push:
     branches:
       - hf
-      - radpidtest
 
 permissions:
   contents: read
   id-token: write
 
-env:
-  AWS_REGION: ap-south-1
-  ECR_REPO: fastapi-github
-  ECR_REGISTRY: 941086635353.dkr.ecr.ap-south-1.amazonaws.com
-  CLUSTER_NAME: disco-dog
-  NAMESPACE: fastapi
+# env:
+#   AWS_REGION: ap-south-1
+#   ECR_REPO: fastapi-github
+#   ECR_REGISTRY: 941086635353.dkr.ecr.ap-south-1.amazonaws.com
+#   CLUSTER_NAME: disco-dog
+#   NAMESPACE: fastapi
 
 jobs:
   dast:
@@ -39,80 +38,80 @@ jobs:
       with:
         name: dast-report
         path: rapiddast/report/
-  # ----------------------------------------------------
-  # 2) Build & Push Docker Image
-  # ----------------------------------------------------
-  build-and-push:
-    name: 🏗️ Build & Push Docker Image
-    runs-on: ubuntu-latest
-    needs: rapidast-scan   # ✅ FIXED name
+  # # ----------------------------------------------------
+  # # 2) Build & Push Docker Image
+  # # ----------------------------------------------------
+  # build-and-push:
+  #   name: 🏗️ Build & Push Docker Image
+  #   runs-on: ubuntu-latest
+  #   needs: rapidast-scan   # ✅ FIXED name
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+  #     - uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-region: ${{ env.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@v2
+  #     - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set Image Metadata
-        run: |
-          echo "IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}" >> $GITHUB_ENV
+  #     - name: Set Image Metadata
+  #       run: |
+  #         echo "IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}" >> $GITHUB_ENV
 
-      - name: Build Image
-        run: |
-          docker build -t $IMAGE_URI .
+  #     - name: Build Image
+  #       run: |
+  #         docker build -t $IMAGE_URI .
 
-      - name: Push Image
-        run: |
-          docker push $IMAGE_URI
-          echo $IMAGE_URI > image_uri.txt
+  #     - name: Push Image
+  #       run: |
+  #         docker push $IMAGE_URI
+  #         echo $IMAGE_URI > image_uri.txt
 
-      - name: Upload Image URI
-        uses: actions/upload-artifact@v4
-        with:
-          name: image_uri
-          path: image_uri.txt
+  #     - name: Upload Image URI
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: image_uri
+  #         path: image_uri.txt
 
-  # ----------------------------------------------------
-  # 3) Deploy to EKS
-  # ----------------------------------------------------
-  deploy:
-    name: 🚢 Deploy to AWS EKS
-    runs-on: ubuntu-latest
-    needs: build-and-push
+  # # ----------------------------------------------------
+  # # 3) Deploy to EKS
+  # # ----------------------------------------------------
+  # deploy:
+  #   name: 🚢 Deploy to AWS EKS
+  #   runs-on: ubuntu-latest
+  #   needs: build-and-push
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+  #     - uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-region: ${{ env.AWS_REGION }}
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: image_uri
+  #     - uses: actions/download-artifact@v4
+  #       with:
+  #         name: image_uri
 
-      - name: Load Image URI
-        run: echo "IMAGE_URI=$(cat image_uri.txt)" >> $GITHUB_ENV
+  #     - name: Load Image URI
+  #       run: echo "IMAGE_URI=$(cat image_uri.txt)" >> $GITHUB_ENV
 
-      - name: Configure kubectl
-        run: |
-          aws eks update-kubeconfig \
-            --name ${{ env.CLUSTER_NAME }} \
-            --region ${{ env.AWS_REGION }}
-          kubectl get nodes
+  #     - name: Configure kubectl
+  #       run: |
+  #         aws eks update-kubeconfig \
+  #           --name ${{ env.CLUSTER_NAME }} \
+  #           --region ${{ env.AWS_REGION }}
+  #         kubectl get nodes
 
-      - name: Deploy to Kubernetes
-        run: |
-          kubectl apply -f k8s/namespace.yaml --validate=false
-          sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
-          kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/hpa.yaml
+  #     - name: Deploy to Kubernetes
+  #       run: |
+  #         kubectl apply -f k8s/namespace.yaml --validate=false
+  #         sed "s|REPLACE_WITH_IMAGE|$IMAGE_URI|g" k8s/deployment.yaml | kubectl apply -f -
+  #         kubectl apply -f k8s/service.yaml
+  #         kubectl apply -f k8s/hpa.yaml
 
-          echo "🎉 Deployment Successful!"
+  #         echo "🎉 Deployment Successful!"
