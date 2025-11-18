@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - hf
+      - radpidtest
 
 permissions:
   contents: read
