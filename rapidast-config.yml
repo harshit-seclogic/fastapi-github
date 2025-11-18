@@ -1,34 +1,13 @@
-configVersion: "2.0"
-
 application:
-  name: "bookstore-app"
-  url: "http://app:80"
-  apiScan:
-    openApiUrl: "http://app:80/openapi.json"
+  shortName: "test-app"
+  description: "Testing RapiDAST scan from GitHub"
+  labels:
+    project: "test"
 
-authentication:
-  method: "cookie"
-  login:
-    url: "http://app:80/login"
-    usernameField: "username"
-    passwordField: "password"
-    username: "testuser"
-    password: "testpass"
+scanners:
+  - name: zap
+    scanType: "full"
 
-scanner:
-  zap:
-    enabled: true
-    policies:
-      - "API-Security"
-      - "Injection"
-      - "XSS"
-    apiScan: true
-    spider: true
-    spiderAjax: true
-
-results:
-  output:
-    formats:
-      - json
-      - html
-    directory: "results"
+targets:
+  - name: "juice-shop"
+    url: "https://juice-shop.herokuapp.com"
